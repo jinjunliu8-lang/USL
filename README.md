@@ -15,6 +15,8 @@ npm run usl -- gen-prompt examples/email_login.usl
 
 Docs:
 
+- Language overview Chinese: `docs/usl-language.zh.md`
+- Language overview English: `docs/usl-language.en.md`
 - Chinese: `docs/usl-v0.1.zh.md`
 - English: `docs/usl-v0.1.en.md`
 - Order payment case study: `docs/case-study-order-payment.zh.md`
