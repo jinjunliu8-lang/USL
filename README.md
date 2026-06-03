@@ -21,6 +21,7 @@ Docs:
 - Chinese: `docs/usl-v0.1.zh.md`
 - English: `docs/usl-v0.1.en.md`
 - Order payment case study: `docs/case-study-order-payment.zh.md`
+- Pure Chinese order payment reading version: `docs/order-payment-pure-zh.md`
 - Compatibility entry: `docs/usl-v0.1.md`
 
 ## License
