@@ -1,0 +1,31 @@
+{
+  "name": "usl",
+  "version": "0.1.0",
+  "description": "USL v0.1 CLI prototype for an AI-era software semantic source language.",
+  "type": "module",
+  "bin": {
+    "usl": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "usl": "tsx src/cli.ts"
+  },
+  "keywords": [
+    "usl",
+    "semantic-language",
+    "ai-agent",
+    "specification"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^14.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.14"
+  }
+}

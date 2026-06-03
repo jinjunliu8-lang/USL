@@ -1,0 +1,9 @@
+goal:
+  invalid because spec is missing
+
+flow Bad:
+  when User submits Order
+  else reject UNKNOWN_ERROR
+
+done:
+  ok

@@ -1,0 +1,110 @@
+spec EmailCodeLogin v0.1:
+
+goal:
+  为用户提供邮箱验证码登录能力，避免使用密码。
+
+actor User:
+  kind: anonymous | registered
+
+entity EmailCode:
+  email: Email
+  code_hash: String
+  expires_at: DateTime
+  failed_count: Int
+  locked_until: DateTime?
+
+entity Session:
+  token: JWT
+  expires_in: 7d
+
+entity LoginEvent:
+  email: Email
+  ip: String
+  device: String
+  created_at: DateTime
+
+state EmailCode:
+  states: active | expired | locked | consumed
+  active -> consumed
+  active -> expired
+  active -> locked
+  locked -> active
+
+flow SendCode:
+  when User submits Email
+  then System generates 6-digit code
+  and System stores hashed EmailCode
+  and System sends code to Email
+  and System rate limits same Email for 60s
+  else reject RATE_LIMITED
+
+flow VerifyCode:
+  when User submits Email and Code
+  if EmailCode is valid and not expired
+  and EmailCode is not locked
+  then System creates Session
+  and System records LoginEvent
+  else reject CODE_INVALID
+
+flow LockAfterFailures:
+  when User submits wrong Code 5 times
+  then System locks EmailCode for 15m
+  else reject ACCOUNT_LOCKED
+
+rule:
+  must not reveal whether Email is registered
+  must hash code before storing
+  must lock Email for 15m after 5 failed attempts
+  must return stable error codes
+
+error CODE_EXPIRED:
+  when: code expired
+  message: 验证码已过期
+
+error CODE_INVALID:
+  when: code incorrect
+  message: 验证码错误
+
+error RATE_LIMITED:
+  when: resend within 60s
+  message: 请求过于频繁
+
+error ACCOUNT_LOCKED:
+  when: failed 5 times
+  message: 账户暂时锁定
+
+test valid_code_login:
+  given EmailCode is active
+  when User submits correct Code
+  then Session is created
+  and LoginEvent is recorded
+
+test expired_code_login:
+  given EmailCode is expired
+  when User submits Code
+  then error = CODE_EXPIRED
+
+test too_many_failures:
+  given User failed 5 times
+  when User submits Code again
+  then error = ACCOUNT_LOCKED
+
+test stable_error_codes:
+  given Email may or may not be registered
+  when User requests or verifies Code
+  then System returns stable error codes
+  and System does not reveal registration status
+
+limit:
+  may_modify:
+    - src/auth/**
+    - tests/auth/**
+  must_not_modify:
+    - src/payment/**
+    - database/old_migrations/**
+
+done:
+  all tests pass
+  API documented
+  no security warning
+  no existing behavior broken
