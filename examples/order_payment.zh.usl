@@ -1,0 +1,210 @@
+spec OrderPaymentCN v0.1:
+
+goal:
+  买家可以为待支付订单完成付款。系统必须保证支付回调、库存预占、支付金额、订单状态和审计日志保持一致。
+
+actor Buyer:
+  kind: registered
+  description: 已注册买家
+
+actor PaymentProvider:
+  kind: external_service
+  description: 第三方支付服务
+
+entity Order:
+  id: UUID
+  buyer_id: UUID
+  state: pending_payment | paid | payment_failed | cancelled | refunded
+  total_amount: Money
+  currency: CNY
+  description: 订单，保存买家、金额和支付状态
+
+entity Payment:
+  id: UUID
+  order_id: UUID
+  provider_trade_id: String
+  state: created | processing | succeeded | failed | cancelled
+  amount: Money
+  currency: CNY
+  description: 支付单，记录一次订单支付尝试
+
+entity InventoryReservation:
+  id: UUID
+  order_id: UUID
+  state: reserved | released | consumed
+  expires_at: DateTime
+  description: 库存预占记录，用于防止超卖
+
+entity OrderPaidEvent:
+  order_id: UUID
+  payment_id: UUID
+  emitted_at: DateTime
+  description: 订单支付成功事件
+
+entity PaymentAuditLog:
+  payment_id: UUID
+  action: String
+  payload_hash: String
+  created_at: DateTime
+  description: 支付回调审计日志
+
+state Order:
+  states: pending_payment | paid | payment_failed | cancelled | refunded
+  pending_payment -> paid
+  pending_payment -> payment_failed
+  pending_payment -> cancelled
+  paid -> refunded
+
+state Payment:
+  states: created | processing | succeeded | failed | cancelled
+  created -> processing
+  processing -> succeeded
+  processing -> failed
+  created -> cancelled
+
+state InventoryReservation:
+  states: reserved | released | consumed
+  reserved -> consumed
+  reserved -> released
+
+flow CreatePayment:
+  when Buyer 点击支付 Order
+  if Order 处于 pending_payment
+  and InventoryReservation 处于 reserved
+  then System 创建 Payment
+  and System 使用 Order.total_amount 创建第三方支付请求
+  and System 将 Payment 标记为 processing
+  else reject ORDER_NOT_PAYABLE
+
+flow PaymentSuccessCallback:
+  when PaymentProvider 发送 Payment 支付成功回调
+  if 回调签名有效
+  and Payment.amount 等于 Order.total_amount
+  and Order 处于 pending_payment
+  then System 将 Payment 标记为 succeeded
+  and System 将 Order 标记为 paid
+  and System 将 InventoryReservation 标记为 consumed
+  and System 发出 OrderPaidEvent
+  and System 记录 PaymentAuditLog
+  else reject INVALID_PAYMENT_CALLBACK
+
+flow PaymentFailureCallback:
+  when PaymentProvider 发送 Payment 支付失败回调
+  if 回调签名有效
+  and Order 处于 pending_payment
+  then System 将 Payment 标记为 failed
+  and System 将 Order 标记为 payment_failed
+  and System 释放 InventoryReservation
+  and System 记录 PaymentAuditLog
+  else reject INVALID_PAYMENT_CALLBACK
+
+flow CancelBeforePayment:
+  when Buyer 在支付成功前取消 Order
+  if Order 处于 pending_payment
+  then System 将 Order 标记为 cancelled
+  and System 将 Payment 标记为 cancelled
+  and System 释放 InventoryReservation
+  else reject ORDER_NOT_CANCELLABLE
+
+flow DuplicateCallback:
+  when PaymentProvider 再次发送同一个 Payment 支付成功回调
+  if Order 已经处于 paid
+  then System 保持 Order 为 paid
+  and System 保持 Payment 为 succeeded
+  and System 不重复发出 OrderPaidEvent
+  and System 记录 PaymentAuditLog
+  else reject DUPLICATE_CALLBACK
+
+rule:
+  must 验证支付回调签名
+  must 保证重复支付回调幂等
+  must not 重复发出 OrderPaidEvent
+  must not 信任前端传入的支付金额
+  must 使用服务端 Order.total_amount 作为支付金额
+  must 支付前先预占库存
+  must 支付失败或订单取消时释放库存
+  must 每次支付回调都记录 PaymentAuditLog
+
+error ORDER_NOT_PAYABLE:
+  when: Order 不是 pending_payment 或库存未预占
+  message: 订单当前不可支付
+
+error INVALID_PAYMENT_CALLBACK:
+  when: 支付回调签名无效或金额不一致
+  message: 支付回调无效
+
+error ORDER_NOT_CANCELLABLE:
+  when: Order 已经 paid 或 refunded
+  message: 订单当前不可取消
+
+error DUPLICATE_CALLBACK:
+  when: 支付回调已经处理过
+  message: 重复支付回调
+
+test create_payment_requires_inventory:
+  given Order 处于 pending_payment
+  and InventoryReservation 处于 reserved
+  when Buyer 点击支付 Order
+  then Payment 被创建
+  and Payment 处于 processing
+  and 库存在支付前已经预占
+  and 支付前先预占库存
+
+test successful_payment_callback:
+  given Order 处于 pending_payment
+  and Payment 处于 processing
+  and InventoryReservation 处于 reserved
+  when PaymentProvider 发送有效支付成功回调
+  then 验证支付回调签名
+  and Payment 处于 succeeded
+  and Order 处于 paid
+  and InventoryReservation 处于 consumed
+  and OrderPaidEvent 被发出
+  and PaymentAuditLog 记录审计日志
+
+test forged_callback_is_rejected:
+  given Payment 回调签名无效
+  when PaymentProvider 发送回调
+  then error = INVALID_PAYMENT_CALLBACK
+  and Order 保持 pending_payment
+
+test amount_tampering_is_rejected:
+  given 前端传入金额不同于 Order.total_amount
+  when PaymentProvider 发送支付成功回调
+  then error = INVALID_PAYMENT_CALLBACK
+  and System 使用服务端 Order.total_amount
+  and System 不会 信任前端传入的支付金额
+
+test duplicate_callback_is_idempotent:
+  given Order 已经处于 paid
+  and Payment 已经处于 succeeded
+  when PaymentProvider 发送重复支付成功回调
+  then 回调处理是幂等的
+  and 保证重复支付回调幂等
+  and 不会重复发出 OrderPaidEvent
+
+test inventory_released_after_cancel:
+  given Order 处于 pending_payment
+  and InventoryReservation 处于 reserved
+  when Buyer 取消 Order
+  then Order 处于 cancelled
+  and InventoryReservation 处于 released
+  and 支付失败或订单取消时释放库存
+
+limit:
+  may_modify:
+    - src/order/**
+    - src/payment/**
+    - src/inventory/**
+    - tests/order-payment/**
+  must_not_modify:
+    - src/auth/**
+    - database/legacy_migrations/**
+
+done:
+  所有支付相关测试通过
+  支付回调幂等性已验证
+  支付回调签名验证已文档化
+  每次支付回调都有审计日志
+  不可能重复发出 OrderPaidEvent
+  不破坏现有订单 API 行为

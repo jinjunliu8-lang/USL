@@ -32,6 +32,15 @@ describe("CLI", () => {
     expect(result.stdout).toContain("No diagnostics.");
   });
 
+  it("check succeeds for the Chinese order payment case study", () => {
+    const result = spawnSync("npx", [...cli, "check", "examples/order_payment.zh.usl"], {
+      encoding: "utf8"
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("No diagnostics.");
+  });
+
   it("check fails for an invalid spec", () => {
     const result = spawnSync("npx", [...cli, "check", "tests/fixtures/invalid.usl"], {
       encoding: "utf8"

@@ -10,6 +10,7 @@ USL 不是万能代码翻译器，而是一门面向 AI 编程时代的通用软
 npm install
 npm run usl -- check examples/email_login.usl
 npm run usl -- check examples/order_payment.usl
+npm run usl -- check examples/order_payment.zh.usl
 npm run usl -- gen-prompt examples/email_login.usl
 ```
 
