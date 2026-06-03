@@ -1,0 +1,198 @@
+spec OrderPayment v0.1:
+
+goal:
+  让买家可以为待支付订单完成付款，并保证支付回调、库存、金额和订单状态的一致性。
+
+actor Buyer:
+  kind: registered
+
+actor PaymentProvider:
+  kind: external_service
+
+entity Order:
+  id: UUID
+  buyer_id: UUID
+  state: pending_payment | paid | payment_failed | cancelled | refunded
+  total_amount: Money
+  currency: CNY
+
+entity Payment:
+  id: UUID
+  order_id: UUID
+  provider_trade_id: String
+  state: created | processing | succeeded | failed | cancelled
+  amount: Money
+  currency: CNY
+
+entity InventoryReservation:
+  id: UUID
+  order_id: UUID
+  state: reserved | released | consumed
+  expires_at: DateTime
+
+entity OrderPaidEvent:
+  order_id: UUID
+  payment_id: UUID
+  emitted_at: DateTime
+
+entity PaymentAuditLog:
+  payment_id: UUID
+  action: String
+  payload_hash: String
+  created_at: DateTime
+
+state Order:
+  states: pending_payment | paid | payment_failed | cancelled | refunded
+  pending_payment -> paid
+  pending_payment -> payment_failed
+  pending_payment -> cancelled
+  paid -> refunded
+
+state Payment:
+  states: created | processing | succeeded | failed | cancelled
+  created -> processing
+  processing -> succeeded
+  processing -> failed
+  created -> cancelled
+
+state InventoryReservation:
+  states: reserved | released | consumed
+  reserved -> consumed
+  reserved -> released
+
+flow CreatePayment:
+  when Buyer clicks pay on Order
+  if Order is pending_payment
+  and InventoryReservation is reserved
+  then System creates Payment
+  and System sends Order total_amount to PaymentProvider
+  and System marks Payment as processing
+  else reject ORDER_NOT_PAYABLE
+
+flow PaymentSuccessCallback:
+  when PaymentProvider sends success callback for Payment
+  if callback signature is valid
+  and Payment amount equals Order total_amount
+  and Order is pending_payment
+  then System marks Payment as succeeded
+  and System marks Order as paid
+  and System marks InventoryReservation as consumed
+  and System emits OrderPaidEvent
+  and System records PaymentAuditLog
+  else reject INVALID_PAYMENT_CALLBACK
+
+flow PaymentFailureCallback:
+  when PaymentProvider sends failure callback for Payment
+  if callback signature is valid
+  and Order is pending_payment
+  then System marks Payment as failed
+  and System marks Order as payment_failed
+  and System releases InventoryReservation
+  and System records PaymentAuditLog
+  else reject INVALID_PAYMENT_CALLBACK
+
+flow CancelBeforePayment:
+  when Buyer cancels Order before payment succeeds
+  if Order is pending_payment
+  then System marks Order as cancelled
+  and System marks Payment as cancelled
+  and System releases InventoryReservation
+  else reject ORDER_NOT_CANCELLABLE
+
+flow DuplicateCallback:
+  when PaymentProvider sends same success callback again
+  if Order is already paid
+  then System keeps Order as paid
+  and System keeps Payment as succeeded
+  and System does not emit duplicate OrderPaidEvent
+  and System records PaymentAuditLog
+  else reject DUPLICATE_CALLBACK
+
+rule:
+  must verify payment callback signature
+  must be idempotent for duplicate callbacks
+  must not emit duplicate OrderPaidEvent
+  must not trust amount from frontend
+  must use Order total_amount from server
+  must reserve inventory before payment
+  must release inventory when payment fails or Order is cancelled
+  must record payment audit log
+
+error ORDER_NOT_PAYABLE:
+  when: Order is not pending_payment or inventory is not reserved
+  message: 订单当前不可支付
+
+error INVALID_PAYMENT_CALLBACK:
+  when: callback signature or amount is invalid
+  message: 支付回调无效
+
+error ORDER_NOT_CANCELLABLE:
+  when: Order is already paid or refunded
+  message: 订单当前不可取消
+
+error DUPLICATE_CALLBACK:
+  when: callback was already processed
+  message: 重复支付回调
+
+test create_payment_requires_inventory:
+  given Order is pending_payment
+  and InventoryReservation is reserved
+  when Buyer clicks pay on Order
+  then Payment is created
+  and Payment is processing
+  and inventory is reserved before payment
+
+test successful_payment_callback:
+  given Order is pending_payment
+  and Payment is processing
+  and InventoryReservation is reserved
+  when PaymentProvider sends valid success callback
+  then Payment is succeeded
+  and Order is paid
+  and InventoryReservation is consumed
+  and OrderPaidEvent is emitted
+  and PaymentAuditLog records audit log
+
+test forged_callback_is_rejected:
+  given Payment callback has invalid signature
+  when PaymentProvider sends callback
+  then error = INVALID_PAYMENT_CALLBACK
+  and Order remains pending_payment
+
+test amount_tampering_is_rejected:
+  given frontend amount differs from Order total_amount
+  when PaymentProvider sends success callback
+  then error = INVALID_PAYMENT_CALLBACK
+  and System uses Order total_amount from server
+
+test duplicate_callback_is_idempotent:
+  given Order is already paid
+  and Payment is already succeeded
+  when PaymentProvider sends duplicate success callback
+  then callback handling is idempotent
+  and no duplicate OrderPaidEvent is emitted
+
+test inventory_released_after_cancel:
+  given Order is pending_payment
+  and InventoryReservation is reserved
+  when Buyer cancels Order
+  then Order is cancelled
+  and InventoryReservation is released
+
+limit:
+  may_modify:
+    - src/order/**
+    - src/payment/**
+    - src/inventory/**
+    - tests/order-payment/**
+  must_not_modify:
+    - src/auth/**
+    - database/legacy_migrations/**
+
+done:
+  all payment tests pass
+  payment callback idempotency verified
+  callback signature verification documented
+  audit log exists for every callback
+  no duplicate OrderPaidEvent can be emitted
+  no existing order API behavior broken
