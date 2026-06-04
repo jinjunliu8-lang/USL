@@ -1,65 +1,61 @@
 # USL v0.1 English Specification
 
-USL stands for Universal Semantic Language. Its intended position is:
+USL v0.1 is positioned as:
 
-> USL is a general-purpose software semantic source language for the AI programming era.
+> USL is a control language for AI coding.
 
-USL is not a universal code translator. It is not designed to convert arbitrary Python code into Java, C++, or any other language with 100% fidelity. Instead, USL describes software semantics before implementation: what the system should do, which objects exist, which states they can have, how states change, which rules must hold, how behavior is tested, what counts as done, and where an AI Agent is allowed or forbidden to make changes.
+It is not a universal code translator and it is not a new general-purpose programming language. It is used before an AI agent writes code to describe goals, objects, states, flows, rules, errors, tests, change boundaries, and completion criteria. This lets users control what the AI should do, what it must not do, how the result should be verified, and when the work is done without first learning every target language or framework.
 
-## Core Positioning
-
-The USL workflow is:
+## Core Workflow
 
 ```text
-Human writes a .usl semantic source
+Human writes a .usl control spec
 USL CLI parses and checks it
-USL CLI generates an Agent prompt pack
-AI Agent or target-language tooling generates implementation, tests, docs, and interfaces
-Human reviews whether the intended semantics were implemented correctly
+USL CLI generates an Agent execution prompt
+AI Agent implements code, tests, docs, and interfaces according to the spec
+Human accepts the result using tests and done criteria
 ```
 
-USL is not meant to replace Python, Java, or C++. It is meant to become a shared semantic source before those target languages.
+USL does not replace Python, Java, TypeScript, Go, or PyTorch. Target languages and frameworks handle implementation; USL controls the AI coding process.
 
 ## Design Principles
 
 - More structured than natural language.
-- More semantic than traditional code.
-- Better at expressing behavior than configuration files.
-- More executable than UML.
-- More verifiable than prompts.
+- Closer to user intent than traditional code.
+- More bounded and verifiable than ordinary prompts.
 - English keywords, with body text allowed in English or Chinese.
-- v0.1 prioritizes readability and semantic checking, not direct generation of runnable business code.
-- Important rules should be covered by tests or completion criteria.
+- v0.1 prioritizes readability, parsing, and checks.
+- Important rules should be covered by `test` or `done`.
+- AI change boundaries should be expressed with `limit`.
 
 ## Intended Scope
 
-USL v0.1 is suitable for describing:
+USL v0.1 is suitable for controlling AI implementation of:
 
 - business systems
 - backend services
 - APIs
 - data models
 - permission systems
-- order systems
-- payment flows
+- order and payment flows
 - workflows
 - task scheduling
 - data pipelines
 - test generation
 - API documentation
-- semantic sources for multi-language SDKs
+- deep learning training task specs
 
-USL v0.1 is not intended to cover these areas first:
+USL v0.1 does not prioritize:
 
-- low-level game engine internals
 - operating system kernels
 - compiler backends
 - extreme performance optimization
-- graphics rendering
-- complex C++ template metaprogramming
+- low-level graphics rendering
 - hardware drivers
+- full formal verification
+- arbitrary natural-language expressions
 
-The practical boundary is: USL captures the main system semantics, while target languages still handle performance, ecosystems, low-level control, and specialized implementation details.
+The practical boundary is: USL controls main intent, rules, boundaries, and acceptance criteria; target languages and frameworks handle performance, ecosystem details, low-level control, and specialized implementation.
 
 ## Top-Level Blocks
 
@@ -74,14 +70,14 @@ goal:
   Allow users to log in with an email verification code instead of a password.
 ```
 
-Declares the feature goal.
+Declares the goal. `goal` tells the AI what must be completed.
 
 ```usl
 actor User:
   kind: anonymous | registered
 ```
 
-Declares an actor. Actors are usually users, external systems, or third-party services.
+Declares an actor. Actors are usually users, external systems, third-party services, or AI execution environments.
 
 ```usl
 entity EmailCode:
@@ -89,7 +85,7 @@ entity EmailCode:
   code_hash: String
 ```
 
-Declares a business object and its fields.
+Declares an object and its fields. Objects can be business objects, configuration objects, training data, model components, or artifacts.
 
 ```usl
 state EmailCode:
@@ -97,7 +93,7 @@ state EmailCode:
   active -> consumed
 ```
 
-Declares an entity state machine. `states:` is the explicit state set, and `from -> to` is an allowed transition.
+Declares an object state machine. `states:` is the explicit state set, and `from -> to` is an allowed transition.
 
 ```usl
 flow VerifyCode:
@@ -107,7 +103,7 @@ flow VerifyCode:
   else reject CODE_INVALID
 ```
 
-Declares system behavior. v0.1 supports `when`, `if`, `then`, `else`, and `and`.
+Declares behavior the AI should implement. v0.1 supports `when`, `if`, `then`, `else`, and `and`.
 
 ```usl
 rule:
@@ -115,7 +111,7 @@ rule:
   must hash code before storing
 ```
 
-Declares rules that must be preserved. v0.1 supports `must` and `must not`.
+Declares rules that must be preserved. `must` means required, and `must not` means forbidden. Rules are the core control surface of USL.
 
 ```usl
 error CODE_INVALID:
@@ -123,7 +119,7 @@ error CODE_INVALID:
   message: Invalid code
 ```
 
-Declares stable error codes.
+Declares stable error codes so the AI does not invent inconsistent error behavior.
 
 ```usl
 test valid_code_login:
@@ -132,7 +128,7 @@ test valid_code_login:
   then Session is created
 ```
 
-Declares acceptance tests. v0.1 supports `given`, `when`, `then`, and `and`.
+Declares acceptance tests. v0.1 supports `given`, `when`, `then`, and `and`. Tests prove that flows and rules were implemented.
 
 ```usl
 limit:
@@ -142,7 +138,7 @@ limit:
     - src/payment/**
 ```
 
-Declares engineering boundaries for an AI Agent.
+Declares engineering change boundaries for the AI agent. Without boundaries, AI coding can drift into unrelated files.
 
 ```usl
 done:
@@ -150,7 +146,7 @@ done:
   API documented
 ```
 
-Declares completion criteria. A document must include `done`.
+Declares completion criteria. A document must include `done`. `done` is the shared definition of completion for humans and AI.
 
 ## CLI Commands
 
@@ -161,7 +157,7 @@ npm run usl -- gen-prompt examples/email_login.usl
 npm run usl -- explain examples/email_login.usl
 ```
 
-`parse` prints the JSON AST. `check` prints diagnostics. `gen-prompt` generates a Markdown implementation prompt for an AI Agent. `explain` explains the spec in Chinese.
+`parse` prints the JSON AST. `check` prints diagnostics. `gen-prompt` generates an execution prompt for an AI agent. `explain` explains in Chinese how the USL spec controls AI implementation.
 
 ## v0.1 Checks
 
@@ -169,18 +165,18 @@ npm run usl -- explain examples/email_login.usl
 - Unknown top-level blocks are errors.
 - A `state` block referencing an undefined `entity` is an error.
 - A state transition referencing a state not declared in `states:` is an error.
-- A `flow` referencing undefined business objects or actors is an error.
+- A `flow` referencing undefined objects or actors is an error.
 - A `flow` using `reject ERROR_CODE` with an undefined error code is an error.
 - A `rule` with no related test produces a warning.
 
 ## Non-Goals
 
-- v0.1 does not generate runnable business code.
+- v0.1 does not directly generate runnable business code.
 - v0.1 does not translate arbitrary code into arbitrary target languages.
 - v0.1 does not promise full formal verification.
-- v0.1 does not include a web editor or VS Code extension.
+- v0.1 does not provide a web editor or VS Code extension.
 - v0.1 does not attempt to cover every natural-language expression.
 
 ## One-Sentence Summary
 
-USL is the unified semantic source before code generation. It helps humans define system semantics first, then lets AI Agents and target-language toolchains produce implementations.
+USL v0.1 turns AI coding from scattered conversation into a controlled process with goals, rules, boundaries, tests, and completion criteria.

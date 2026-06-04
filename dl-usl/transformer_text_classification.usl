@@ -1,0 +1,304 @@
+spec TransformerTextClassificationDL v0.1:
+
+goal:
+  为文本分类任务生成一个可复现、可训练、可评估、可导出的 PyTorch 深度学习工程。工程必须定义数据字段、张量形状、Transformer 模型结构、前向传播、损失函数、优化策略、训练检查、评估指标和模型导出标准。
+
+actor MLDeveloper:
+  kind: human
+  description: 编写和审查 DL-USL 规格的人
+
+actor TrainingSystem:
+  kind: ai_agent
+  description: 根据 DL-USL 生成 PyTorch 训练代码、测试和导出脚本
+
+actor PyTorchRuntime:
+  kind: target_framework
+  description: 目标深度学习框架
+
+actor ExperimentTracker:
+  kind: service
+  description: 记录训练损失、验证指标、配置和模型版本
+
+entity Dataset:
+  train_source: ./data/train.csv
+  valid_source: ./data/valid.csv
+  text_field: text
+  label_field: label
+  label_count: 3
+  description: 文本分类数据集
+
+entity TextSample:
+  text: String
+  label: Int64
+  description: 单条文本样本
+
+entity Tokenizer:
+  vocab_size: 10000
+  max_length: 512
+  pad_token_id: 0
+  unk_token_id: 1
+  description: 将文本转换为 token ids 和 attention mask
+
+entity Batch:
+  token_ids: Int64[batch, sequence]
+  attention_mask: Int64[batch, sequence]
+  label: Int64[batch]
+  description: 训练和验证批次
+
+entity Model:
+  architecture: TransformerEncoderClassifier
+  hidden_size: 256
+  layers: 4
+  attention_heads: 8
+  feedforward_size: 1024
+  dropout: 0.1
+  description: Transformer 文本分类模型
+
+entity Embedding:
+  input: token_ids
+  output: Float32[batch, sequence, hidden]
+  description: token embedding，必须使用 pad_token_id 忽略 padding
+
+entity PositionalEncoding:
+  type: sinusoidal
+  max_length: 512
+  dimension: 256
+  description: 位置编码
+
+entity Encoder:
+  type: transformer_encoder
+  norm_first: true
+  batch_first: true
+  activation: gelu
+  description: 多层 Transformer 编码器
+
+entity Pooling:
+  type: masked_mean
+  mask: attention_mask
+  output: Float32[batch, hidden]
+  description: 使用 attention_mask 做平均池化
+
+entity Classifier:
+  input: Float32[batch, hidden]
+  output: Float32[batch, label_count]
+  description: 分类头
+
+entity Logits:
+  shape: Float32[batch, label_count]
+  description: 模型输出，作为交叉熵损失输入
+
+entity Loss:
+  type: cross_entropy
+  input: Logits
+  target: label
+  description: 文本分类损失函数
+
+entity Optimizer:
+  type: AdamW
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  gradient_clip_norm: 1.0
+  description: 优化器和梯度裁剪策略
+
+entity Trainer:
+  epochs: 10
+  batch_size: 32
+  mixed_precision: true
+  seed: 42
+  early_stopping_metric: valid_accuracy
+  early_stopping_patience: 3
+  description: 训练控制器
+
+entity Metrics:
+  metrics: accuracy | macro_f1 | loss
+  monitor: valid_accuracy
+  description: 训练和验证指标
+
+entity Checkpoint:
+  path: ./artifacts/checkpoints/best.pt
+  state: empty | candidate | best | archived
+  description: 最佳模型权重
+
+entity ExportArtifact:
+  formats: torchscript | onnx
+  example_token_ids_shape: Int64[1,512]
+  example_attention_mask_shape: Int64[1,512]
+  state: pending | exported | verified
+  description: 推理部署产物
+
+state Checkpoint:
+  states: empty | candidate | best | archived
+  empty -> candidate
+  candidate -> best
+  best -> archived
+
+state ExportArtifact:
+  states: pending | exported | verified
+  pending -> exported
+  exported -> verified
+
+flow PrepareDataset:
+  when MLDeveloper requests training code from TrainingSystem
+  if Dataset train_source and valid_source exist
+  and Dataset text_field and label_field are present
+  then TrainingSystem builds Tokenizer from Dataset
+  and TrainingSystem converts TextSample into Batch
+  and TrainingSystem pads token_ids to Tokenizer max_length
+  and TrainingSystem creates attention_mask for padding
+  else reject DATASET_INVALID
+
+flow ForwardPass:
+  when PyTorchRuntime receives Batch for Model
+  if Batch token_ids shape is int64[batch, sequence]
+  and Batch attention_mask shape equals token_ids shape
+  and Model hidden_size can divide Model attention_heads
+  then PyTorchRuntime sends token_ids through Embedding
+  and PyTorchRuntime adds PositionalEncoding
+  and PyTorchRuntime sends hidden states through Encoder
+  and PyTorchRuntime applies Pooling with attention_mask
+  and PyTorchRuntime sends pooled vector through Classifier
+  and PyTorchRuntime returns Logits
+  else reject SHAPE_INVALID
+
+flow TrainingStep:
+  when Trainer starts one optimization step
+  if Model is in train mode
+  and Batch label shape is int64[batch]
+  then PyTorchRuntime computes Logits
+  and PyTorchRuntime computes Loss from Logits and label
+  and PyTorchRuntime checks Loss is finite
+  and PyTorchRuntime clips gradients with Optimizer gradient_clip_norm
+  and PyTorchRuntime updates Model with Optimizer
+  and ExperimentTracker records Loss
+  else reject TRAIN_STEP_INVALID
+
+flow Evaluation:
+  when Trainer runs validation epoch
+  if Model is in eval mode
+  and gradients are disabled
+  then PyTorchRuntime computes Logits on validation Batch
+  and TrainingSystem computes Metrics
+  and ExperimentTracker records Metrics
+  and TrainingSystem never updates Optimizer during validation
+  else reject EVAL_INVALID
+
+flow SaveBestCheckpoint:
+  when Metrics valid_accuracy improves
+  if Checkpoint state is empty or candidate or best
+  then TrainingSystem saves Model weights to Checkpoint
+  and TrainingSystem marks Checkpoint as best
+  and ExperimentTracker records Checkpoint path
+  else reject CHECKPOINT_INVALID
+
+flow ExportModel:
+  when training is complete and Checkpoint is best
+  if ExportArtifact state is pending
+  and example token_ids shape is int64[1,512]
+  and example attention_mask shape is int64[1,512]
+  then TrainingSystem exports Checkpoint to torchscript
+  and TrainingSystem exports Checkpoint to onnx
+  and TrainingSystem verifies ExportArtifact output shape equals Logits shape
+  and TrainingSystem marks ExportArtifact as verified
+  else reject EXPORT_INVALID
+
+rule:
+  must 使用 attention_mask 忽略 padding
+  must 保证 token_ids 和 attention_mask 形状一致
+  must 保证 Logits 形状是 Float32[batch,label_count]
+  must 保证 Model hidden_size 可以被 attention_heads 整除
+  must 记录 Loss 和 Metrics
+  must not 在 Evaluation 中更新 Optimizer
+  must not validation_backprop 在验证集上反向传播
+  must not 导出未经 verified 的 ExportArtifact
+
+error DATASET_INVALID:
+  when: Dataset 路径不存在，字段缺失，或 label_count 与标签空间不一致
+  message: 数据集定义无效
+
+error SHAPE_INVALID:
+  when: Batch、Logits 或模型内部张量形状不满足规格
+  message: 张量形状无效
+
+error TRAIN_STEP_INVALID:
+  when: Loss 为 NaN、梯度未裁剪，或 Model 未处于 train mode
+  message: 训练步骤无效
+
+error EVAL_INVALID:
+  when: Evaluation 开启反向传播或更新 Optimizer
+  message: 验证流程无效
+
+error CHECKPOINT_INVALID:
+  when: Checkpoint 生命周期不允许保存最佳模型
+  message: 模型检查点无效
+
+error EXPORT_INVALID:
+  when: ExportArtifact 示例输入不匹配或导出后输出形状未验证
+  message: 模型导出无效
+
+test dataset_fields_are_valid:
+  given Dataset train_source and valid_source exist
+  and Dataset text_field is text
+  and Dataset label_field is label
+  when TrainingSystem prepares Dataset
+  then Tokenizer is built
+  and TextSample is converted into Batch
+  and token_ids are padded to max_length
+  and attention_mask 忽略 padding
+
+test forward_shapes_are_valid:
+  given Batch token_ids shape is Int64[batch, sequence]
+  and Batch attention_mask shape equals token_ids shape
+  and Model hidden_size can divide attention_heads
+  when PyTorchRuntime runs ForwardPass
+  then Logits shape is Float32[batch,label_count]
+  and token_ids 和 attention_mask 形状一致
+  and Model hidden_size 可以被 attention_heads 整除
+
+test training_step_records_loss:
+  given Model is in train mode
+  and Batch label shape is Int64[batch]
+  when Trainer runs TrainingStep
+  then Loss is not NaN
+  and gradients are clipped
+  and Optimizer updates Model
+  and ExperimentTracker records Loss
+
+test evaluation_does_not_train:
+  given Model is in eval mode
+  and gradients are disabled
+  when Trainer runs Evaluation
+  then Metrics are computed
+  and ExperimentTracker records Metrics
+  and Optimizer is not updated during Evaluation
+  and validation_backprop is disabled on validation set
+
+test export_artifact_is_verified:
+  given Checkpoint is best
+  and ExportArtifact state is pending
+  when TrainingSystem exports Model
+  then torchscript artifact is created
+  and onnx artifact is created
+  and ExportArtifact is verified
+  and 未经 verified 的 ExportArtifact 不会交付
+
+limit:
+  may_modify:
+    - src/data/**
+    - src/models/**
+    - src/training/**
+    - src/evaluation/**
+    - src/export/**
+    - tests/deep-learning/**
+  must_not_modify:
+    - data/raw/**
+    - artifacts/checkpoints/**
+    - artifacts/exports/**
+
+done:
+  数据加载、分词、padding 和 attention_mask 逻辑已实现并有测试
+  Transformer 前向传播输出 Logits 形状正确
+  训练步骤包含 Loss、反向传播、梯度裁剪、Optimizer 更新和日志
+  Evaluation 不反向传播也不更新 Optimizer
+  Metrics 至少包含 accuracy、macro_f1 和 loss
+  最佳 Checkpoint 能保存并被导出
+  torchscript 和 onnx ExportArtifact 均通过输出形状验证

@@ -1,0 +1,242 @@
+spec CNNImageClassificationDL v0.1:
+
+goal:
+  为图像分类任务生成一个轻量 CNN 训练工程。工程必须定义图像数据、增强策略、输入张量、卷积模型、训练循环、验证指标、最佳检查点和 ONNX 导出验收标准。
+
+actor MLDeveloper:
+  kind: human
+  description: 编写和审查 DL-USL 规格的人
+
+actor TrainingSystem:
+  kind: ai_agent
+  description: 根据 DL-USL 生成训练代码和测试
+
+actor PyTorchRuntime:
+  kind: target_framework
+  description: 目标深度学习框架
+
+entity ImageDataset:
+  train_source: ./images/train
+  valid_source: ./images/valid
+  class_count: 10
+  image_format: jpg | png
+  description: 按目录组织的图像分类数据集
+
+entity ImageSample:
+  image: RGBImage
+  label: Int64
+  description: 单张图片和标签
+
+entity Transform:
+  resize: 224x224
+  normalize_mean: 0.485,0.456,0.406
+  normalize_std: 0.229,0.224,0.225
+  train_augmentation: random_crop | horizontal_flip
+  description: 图像预处理和训练增强
+
+entity ImageBatch:
+  image_tensor: Float32[batch,3,224,224]
+  label: Int64[batch]
+  description: CNN 输入批次
+
+entity Model:
+  architecture: SmallCNN
+  input_channels: 3
+  class_count: 10
+  dropout: 0.2
+  description: 轻量卷积分类模型
+
+entity FeatureExtractor:
+  layers: conv_bn_relu_pool
+  output: Float32[batch,features]
+  description: 卷积特征提取器
+
+entity Classifier:
+  input: Float32[batch,features]
+  output: Float32[batch,class_count]
+  description: 全连接分类头
+
+entity Logits:
+  shape: Float32[batch,class_count]
+  description: 模型分类输出
+
+entity Loss:
+  type: cross_entropy
+  input: Logits
+  target: label
+  description: 多分类损失
+
+entity Optimizer:
+  type: AdamW
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  description: 优化器
+
+entity Trainer:
+  epochs: 20
+  batch_size: 64
+  seed: 42
+  mixed_precision: true
+  description: 训练控制器
+
+entity Metrics:
+  metrics: top1_accuracy | top5_accuracy | loss
+  monitor: valid_top1_accuracy
+  description: 图像分类指标
+
+entity Checkpoint:
+  path: ./artifacts/checkpoints/cnn_best.pt
+  state: empty | candidate | best | archived
+  description: 最佳模型权重
+
+entity ExportArtifact:
+  format: onnx
+  example_image_tensor_shape: Float32[1,3,224,224]
+  state: pending | exported | verified
+  description: ONNX 推理产物
+
+state Checkpoint:
+  states: empty | candidate | best | archived
+  empty -> candidate
+  candidate -> best
+  best -> archived
+
+state ExportArtifact:
+  states: pending | exported | verified
+  pending -> exported
+  exported -> verified
+
+flow LoadImages:
+  when TrainingSystem prepares ImageDataset
+  if ImageDataset train_source and valid_source exist
+  and ImageDataset class_count is 10
+  then TrainingSystem loads ImageSample
+  and TrainingSystem applies Transform
+  and TrainingSystem creates ImageBatch
+  else reject IMAGE_DATASET_INVALID
+
+flow ForwardPass:
+  when PyTorchRuntime receives ImageBatch for Model
+  if ImageBatch image_tensor shape is float32[batch,3,224,224]
+  and ImageBatch label shape is int64[batch]
+  then PyTorchRuntime sends image_tensor through FeatureExtractor
+  and PyTorchRuntime sends features through Classifier
+  and PyTorchRuntime returns Logits
+  else reject IMAGE_SHAPE_INVALID
+
+flow TrainEpoch:
+  when Trainer starts training epoch
+  if Model is in train mode
+  then PyTorchRuntime computes Logits
+  and PyTorchRuntime computes Loss
+  and PyTorchRuntime updates Model with Optimizer
+  and TrainingSystem records Loss
+  else reject IMAGE_TRAIN_INVALID
+
+flow ValidateEpoch:
+  when Trainer starts validation epoch
+  if Model is in eval mode
+  and gradients are disabled
+  then PyTorchRuntime computes Logits
+  and TrainingSystem computes Metrics
+  and TrainingSystem never updates Optimizer during validation
+  else reject IMAGE_EVAL_INVALID
+
+flow ExportOnnx:
+  when Checkpoint is best
+  if ExportArtifact state is pending
+  and example image_tensor shape is float32[1,3,224,224]
+  then TrainingSystem exports Model to onnx
+  and TrainingSystem verifies ExportArtifact output shape equals Logits shape
+  and TrainingSystem marks ExportArtifact as verified
+  else reject IMAGE_EXPORT_INVALID
+
+rule:
+  must rgb_convert 将所有图像转换为 RGB
+  must 保证 image_tensor 形状是 Float32[batch,3,224,224]
+  must 对训练集应用 augmentation
+  must 对验证集禁用 augmentation
+  must 记录 Loss 和 Metrics
+  must not 在 ValidateEpoch 中更新 Optimizer
+  must not 导出未经 verified 的 ExportArtifact
+
+error IMAGE_DATASET_INVALID:
+  when: ImageDataset 路径不存在、类别数量错误或图片格式不支持
+  message: 图像数据集无效
+
+error IMAGE_SHAPE_INVALID:
+  when: ImageBatch image_tensor 或 label 形状不满足规格
+  message: 图像张量形状无效
+
+error IMAGE_TRAIN_INVALID:
+  when: 训练 epoch 未处于 train mode 或 Loss 无效
+  message: 图像训练流程无效
+
+error IMAGE_EVAL_INVALID:
+  when: ValidateEpoch 更新 Optimizer 或启用梯度
+  message: 图像验证流程无效
+
+error IMAGE_EXPORT_INVALID:
+  when: ExportArtifact 示例输入不匹配或导出未验证
+  message: 图像模型导出无效
+
+test image_dataset_is_loaded:
+  given ImageDataset train_source and valid_source exist
+  and ImageDataset class_count is 10
+  when TrainingSystem loads images
+  then rgb_convert converts every image to RGB
+  and Transform creates ImageBatch
+  and training Transform uses augmentation
+  and validation Transform disables augmentation
+
+test image_forward_shape_is_valid:
+  given ImageBatch image_tensor shape is Float32[batch,3,224,224]
+  and ImageBatch label shape is Int64[batch]
+  when PyTorchRuntime runs ForwardPass
+  then Logits shape is Float32[batch,class_count]
+  and image_tensor 形状是 Float32[batch,3,224,224]
+
+test image_training_records_loss:
+  given Model is in train mode
+  when Trainer runs TrainEpoch
+  then Loss is computed
+  and Optimizer updates Model
+  and TrainingSystem records Loss
+
+test image_validation_does_not_train:
+  given Model is in eval mode
+  and gradients are disabled
+  when Trainer runs ValidateEpoch
+  then Metrics are computed
+  and Optimizer is not updated during ValidateEpoch
+
+test image_export_is_verified:
+  given Checkpoint is best
+  and ExportArtifact state is pending
+  when TrainingSystem exports onnx
+  then ExportArtifact output shape equals Logits shape
+  and ExportArtifact is verified
+  and 未经 verified 的 ExportArtifact 不会交付
+
+limit:
+  may_modify:
+    - src/data/**
+    - src/models/**
+    - src/training/**
+    - src/evaluation/**
+    - src/export/**
+    - tests/image-classification/**
+  must_not_modify:
+    - images/train/**
+    - images/valid/**
+    - artifacts/checkpoints/**
+    - artifacts/exports/**
+
+done:
+  ImageDataset 加载和 Transform 流程已实现并有测试
+  ImageBatch 输入形状固定为 Float32[batch,3,224,224]
+  CNN ForwardPass 输出 Logits 形状正确
+  TrainEpoch 会计算 Loss 并更新 Optimizer
+  ValidateEpoch 不反向传播也不更新 Optimizer
+  Metrics 至少包含 top1_accuracy、top5_accuracy 和 loss
+  ONNX ExportArtifact 已 verified

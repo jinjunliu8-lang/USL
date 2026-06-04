@@ -1,7 +1,7 @@
 {
   "name": "usl",
   "version": "0.1.0",
-  "description": "USL v0.1 CLI prototype for an AI-era software semantic source language.",
+  "description": "USL v0.1 CLI prototype for AI coding control specs.",
   "type": "module",
   "bin": {
     "usl": "./dist/cli.js"

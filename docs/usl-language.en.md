@@ -1,42 +1,42 @@
-# USL: Universal Semantic Language
+# USL: A Control Language For AI Coding
 
-USL stands for Universal Semantic Language.
+USL is a control language for AI coding.
 
-It is a **software semantic source language** for the AI programming era. It does not try to replace Python, Java, C++, Go, or TypeScript. It also does not try to translate arbitrary code from one programming language into another with perfect fidelity.
+It is not trying to replace Python, JavaScript, PyTorch, React, Spring, or any other programming language or framework. It solves a different problem: when people code with AI through conversation, the requirements are scattered across chat, the agent's boundaries are unclear, and it is hard to know whether the result is actually done.
 
-USL focuses on what comes before code:
+USL lets humans write a structured control spec before implementation:
 
 ```text
-What problem should the system solve?
-Who uses it?
-Which objects exist in the system?
-Which states can those objects have?
-Which behaviors change those states?
+What should be built?
+Which objects and states matter?
+Which flows should the AI implement?
 Which rules must always hold?
-Which errors must be expressed consistently?
-Which tests prove the behavior is correct?
-Where may an AI Agent make changes, and where must it not?
+Which errors must be stable?
+Which tests prove the behavior?
+Where may the AI make changes?
 What counts as done?
 ```
 
 ## Why USL Exists
 
-Most software complexity is no longer about syntax. It is about semantics.
+Vibe coding is fast, but it often lacks control.
 
-The hard questions are often not how to write a loop, but how to define things like:
+A natural request such as:
 
 ```text
-When can an order be cancelled?
-Can a payment callback be processed more than once?
-When should inventory be reserved?
-Is this user allowed to access this data?
-What should the system return when something fails?
-What proves that the feature is complete?
+Build email code login for me.
 ```
 
-These questions are not strongly tied to any single programming language. Python, Java, or C++ can implement them, but they are not always the best first layer for expressing the business semantics.
+does not make these constraints explicit:
 
-USL lets humans define system semantics first, then lets AI Agents or target-language toolchains generate implementations, tests, documentation, and interfaces.
+- The system must not reveal whether an email is registered.
+- Codes must be stored as hashes.
+- Consumed codes must not be reusable.
+- Failed attempts may need limits.
+- The agent must not change payment or order modules.
+- A concrete completion standard is needed.
+
+USL turns conversational intent into an executable control spec. Users do not need to learn every target language or framework first, and they do not need to describe every line of code. They do need to state intent, rules, boundaries, tests, and completion criteria.
 
 ## What USL Is Not
 
@@ -46,86 +46,74 @@ It is not:
 
 ```text
 Python -> Java
-Java -> C++
-C++ -> TypeScript
+JavaScript -> Go
+PyTorch -> TensorFlow
 ```
 
 It is closer to:
 
 ```text
-USL semantic source
-  -> API
-  -> data models
-  -> tests
-  -> documentation
-  -> SDKs
-  -> Python / Java / Go / C++ / TypeScript implementations
+USL control spec
+  -> Agent implementation prompt
+  -> target language and framework code
+  -> tests, docs, interfaces, and acceptance evidence
 ```
 
-In other words, USL is the unified semantic source before code generation.
+Target languages still handle runtime behavior, performance, ecosystems, and low-level details. USL controls what the AI should implement, what it must not break, and how the result should be verified.
 
 ## A Small Example
 
 ```usl
-spec OrderPayment v0.1:
+spec EmailCodeLogin v0.1:
 
 goal:
-  Allow a buyer to pay for a pending order while keeping callback, inventory, amount, and order state consistent.
+  Allow users to log in with an email verification code instead of a password.
 
-entity Order:
-  state: pending_payment | paid | payment_failed | cancelled | refunded
-  total_amount: Money
+entity EmailCode:
+  email: Email
+  code_hash: String
+  state: active | expired | locked | consumed
 
-flow PaymentSuccessCallback:
-  when PaymentProvider sends success callback for Payment
-  if callback signature is valid
-  and Payment amount equals Order total_amount
-  and Order is pending_payment
-  then System marks Order as paid
-  and System emits OrderPaidEvent
-  else reject INVALID_PAYMENT_CALLBACK
+flow VerifyCode:
+  when User submits Email and Code
+  if EmailCode is valid and not expired
+  then System creates Session
+  else reject CODE_INVALID
 
 rule:
-  must verify payment callback signature
-  must be idempotent for duplicate callbacks
-  must not emit duplicate OrderPaidEvent
+  must not reveal whether Email is registered
+  must hash code before storing
+  must not allow consumed code to be reused
 
-test duplicate_callback_is_idempotent:
-  given Order is already paid
-  when PaymentProvider sends duplicate success callback
-  then no duplicate OrderPaidEvent is emitted
+test consumed_code_cannot_login:
+  given EmailCode is consumed
+  when User submits the same Code again
+  then error = CODE_INVALID
+
+limit:
+  may_modify:
+    - src/auth/**
+  must_not_modify:
+    - src/payment/**
+
+done:
+  all login tests pass
+  codes are not stored in plaintext
+  email registration status is not leaked
 ```
 
-This is not traditional code, but it already defines the most important parts of the system: objects, states, flows, rules, and acceptance criteria.
+This is not traditional code, but it controls the important parts of AI coding: goal, objects, flows, rules, tests, change boundaries, and completion criteria.
 
-## Where USL Fits
+## Core Value
 
-USL sits between natural language and traditional code:
+USL v0.1 is not primarily about writing fewer lines of code. It is about:
 
-```text
-More structured than natural language
-More semantic than traditional code
-Better at expressing behavior than configuration files
-More executable than UML
-More verifiable than prompts
-```
-
-Its core value is not merely writing less code. Its value is helping humans move from writing implementation details to defining system semantics.
-
-## Long-Term Vision
-
-Software development may increasingly look like this:
-
-```text
-Humans write USL
-AI Agents generate implementations
-Tests verify the intended semantics
-Humans review key design decisions
-Target languages handle performance, ecosystems, and low-level details
-```
-
-The long-term goal of USL is to become the first layer of software expression in the AI programming era.
+- Keeping requirements outside of fragile chat history.
+- Giving AI agents explicit implementation boundaries.
+- Turning important rules into tests and done criteria.
+- Letting people control AI coding without first learning every target language or framework.
+- Helping experienced engineers reduce agent drift and unrelated changes.
 
 One-sentence summary:
 
-> USL is the unified semantic source before code generation.
+> USL turns vibe coding into controlled AI coding with specs, rules, boundaries, and acceptance criteria.

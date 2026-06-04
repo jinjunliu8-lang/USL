@@ -12,7 +12,7 @@ const program = new Command();
 
 program
   .name("usl")
-  .description("USL v0.1 CLI for an AI-era software semantic source language")
+  .description("USL v0.1 CLI for AI coding control specs")
   .version("0.1.0");
 
 program
@@ -39,7 +39,7 @@ program
 program
   .command("gen-prompt")
   .argument("<file>", "USL file to convert")
-  .description("Generate an Agent implementation prompt")
+  .description("Generate an AI Agent execution prompt from a USL control spec")
   .action(async (file) => {
     const document = await loadDocument(file);
     const diagnostics = checkUSL(document);
@@ -55,7 +55,7 @@ program
 program
   .command("explain")
   .argument("<file>", "USL file to explain")
-  .description("Explain a .usl spec in Chinese")
+  .description("Explain in Chinese how a .usl spec controls AI implementation")
   .action(async (file) => {
     const document = await loadDocument(file);
     process.stdout.write(explainUSL(document));

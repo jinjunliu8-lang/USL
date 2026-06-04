@@ -4,9 +4,16 @@ export function generateAgentPrompt(document: USLDocument): string {
   const lines: string[] = [];
   const title = document.spec ? `${document.spec.name}${document.spec.version ? ` ${document.spec.version}` : ""}` : "Untitled USL Spec";
 
-  lines.push(`# Agent Implementation Prompt: ${title}`);
+  lines.push(`# AI Coding Control Prompt: ${title}`);
   lines.push("");
-  lines.push("你是一个软件工程 Agent。请严格按照下面的 USL 规格实现功能，不要超出限制范围。");
+  lines.push("你是一个软件工程 Agent。下面的 USL 不是普通聊天需求，而是实现控制规格。");
+  lines.push("");
+  lines.push("执行要求：");
+  lines.push("- 严格按照目标、对象、状态、流程、规则、错误码、测试、修改边界和完成标准实现。");
+  lines.push("- 不得把未声明的行为当作默认需求自行扩展。");
+  lines.push("- 不得修改 `must_not_modify` 中的路径，不得为了通过测试而绕开规则。");
+  lines.push("- 每条 `rule` 都必须在实现、测试或完成说明中得到体现。");
+  lines.push("- `test` 和 `done` 是验收标准；没有满足它们就不算完成。");
   lines.push("");
 
   section(lines, "功能目标", document.goal?.text ?? []);
@@ -77,6 +84,13 @@ export function generateAgentPrompt(document: USLDocument): string {
   section(lines, "允许修改范围", document.limit?.mayModify ?? []);
   section(lines, "禁止修改范围", document.limit?.mustNotModify ?? []);
   section(lines, "完成标准", document.done?.items ?? []);
+
+  lines.push("## 执行完成前自检");
+  lines.push("");
+  lines.push("- 已逐条核对 `rule`，没有违反 MUST/MUST NOT。");
+  lines.push("- 已执行或说明所有 `test` 的验证方式。");
+  lines.push("- 已确认修改没有超出 `limit`。");
+  lines.push("- 已按 `done` 判断功能完成，而不是只按代码生成完成。");
 
   return lines.join("\n").trimEnd() + "\n";
 }
