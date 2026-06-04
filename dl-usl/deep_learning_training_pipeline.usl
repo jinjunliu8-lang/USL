@@ -1,0 +1,258 @@
+spec DeepLearningTrainingPipeline v0.1:
+
+goal:
+  为一个通用深度学习监督学习任务生成可复现、可训练、可评估、可导出的训练工程。AI 必须明确数据、张量、模型、训练、评估、检查点、导出和验收标准，不能只生成一个无法验证的训练脚本。
+
+actor MLUser:
+  kind: human
+  description: 提出深度学习任务目标但不想深入学习训练框架细节的用户
+
+actor TrainingAgent:
+  kind: ai_agent
+  description: 根据 DL-USL 规格生成训练工程、测试、日志和导出脚本
+
+actor TrainingRuntime:
+  kind: target_framework
+  description: PyTorch、TensorFlow 或 JAX 等目标训练框架
+
+actor ExperimentTracker:
+  kind: service
+  description: 记录配置、loss、metrics、checkpoint 和 export artifact
+
+entity Dataset:
+  train_source: ./data/train
+  valid_source: ./data/valid
+  test_source: ./data/test
+  task_type: classification | regression
+  split_policy: fixed
+  description: 监督学习数据集
+
+entity Sample:
+  input: raw_input
+  label: target
+  description: 单条训练样本
+
+entity Batch:
+  input_tensor: tensor[batch,...]
+  label_tensor: tensor[batch,...]
+  description: 训练和验证批次
+
+entity Model:
+  architecture: task_specific_model
+  input: Batch input_tensor
+  output: Prediction
+  description: 由 AI 根据任务生成，但必须满足输入输出约束的模型
+
+entity Prediction:
+  shape: tensor[batch,output_dim]
+  description: 模型输出
+
+entity Loss:
+  type: task_specific_loss
+  input: Prediction
+  target: Batch label_tensor
+  description: 训练目标
+
+entity Optimizer:
+  type: AdamW
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  gradient_clip_norm: 1.0
+  description: 优化器和梯度策略
+
+entity Trainer:
+  seed: 42
+  epochs: 20
+  batch_size: 32
+  mixed_precision: true
+  description: 训练控制器
+
+entity Metrics:
+  train_metrics: loss
+  valid_metrics: loss | task_metric
+  test_metrics: task_metric
+  description: 训练、验证和测试指标
+
+entity Checkpoint:
+  path: ./artifacts/checkpoints/best.pt
+  state: empty | candidate | best | archived
+  monitor: valid_task_metric
+  description: 最佳模型检查点
+
+entity ExportArtifact:
+  path: ./artifacts/exports/model
+  format: onnx | torchscript | saved_model
+  state: pending | exported | verified
+  description: 推理部署产物
+
+state Checkpoint:
+  states: empty | candidate | best | archived
+  empty -> candidate
+  candidate -> best
+  best -> archived
+
+state ExportArtifact:
+  states: pending | exported | verified
+  pending -> exported
+  exported -> verified
+
+flow PrepareData:
+  when MLUser requests TrainingAgent to build the training pipeline
+  if Dataset train_source and valid_source exist
+  and Dataset task_type is declared
+  then TrainingAgent loads Sample from Dataset
+  and TrainingAgent converts Sample into Batch
+  and TrainingAgent validates Batch input_tensor shape
+  and TrainingAgent validates Batch label_tensor shape
+  else reject DATASET_INVALID
+
+flow ForwardPass:
+  when TrainingRuntime receives Batch for Model
+  if Batch input_tensor shape is valid
+  then TrainingRuntime sends input_tensor through Model
+  and TrainingRuntime returns Prediction
+  and TrainingRuntime validates Prediction shape
+  else reject FORWARD_INVALID
+
+flow TrainingStep:
+  when Trainer runs one training step
+  if Model is in train mode
+  and Batch label_tensor is present
+  then TrainingRuntime computes Prediction
+  and TrainingRuntime computes Loss from Prediction and label_tensor
+  and TrainingRuntime checks Loss is finite
+  and TrainingRuntime clips gradients with Optimizer gradient_clip_norm
+  and TrainingRuntime updates Model with Optimizer
+  and ExperimentTracker records Loss
+  else reject TRAINING_INVALID
+
+flow Evaluation:
+  when Trainer runs validation or test evaluation
+  if Model is in eval mode
+  and gradients are disabled
+  then TrainingRuntime computes Prediction
+  and TrainingAgent computes Metrics
+  and ExperimentTracker records Metrics
+  and TrainingAgent never updates Optimizer during evaluation
+  else reject EVALUATION_INVALID
+
+flow SaveBestCheckpoint:
+  when Metrics improve on validation data
+  if Checkpoint state is empty or candidate or best
+  then TrainingAgent saves Model weights to Checkpoint
+  and TrainingAgent marks Checkpoint as best
+  and ExperimentTracker records Checkpoint path
+  else reject CHECKPOINT_INVALID
+
+flow ExportModel:
+  when training is complete and Checkpoint is best
+  if ExportArtifact state is pending
+  then TrainingAgent exports Model to ExportArtifact format
+  and TrainingAgent verifies ExportArtifact with example Batch input_tensor
+  and TrainingAgent validates exported Prediction shape
+  and TrainingAgent marks ExportArtifact as verified
+  else reject EXPORT_INVALID
+
+rule:
+  must 明确 Dataset 的 train_source 和 valid_source
+  must 明确 Batch input_tensor 和 label_tensor 的 shape
+  must 明确 Prediction 的 shape
+  must 明确 Loss 类型和目标
+  must 记录 Loss 和 Metrics
+  must 保存验证指标最好的 Checkpoint
+  must 导出模型后验证 ExportArtifact
+  must not 在 Evaluation 中更新 Optimizer
+  must not eval_backward 在验证集或测试集上反向传播
+  must not test_label_leakage 泄露测试集标签
+
+error DATASET_INVALID:
+  when: Dataset 路径不存在、任务类型缺失或 Batch shape 无效
+  message: 数据集无效
+
+error FORWARD_INVALID:
+  when: Model 无法从 Batch 生成合法 Prediction
+  message: 前向传播无效
+
+error TRAINING_INVALID:
+  when: Loss 非有限值、梯度未裁剪或训练模式错误
+  message: 训练步骤无效
+
+error EVALUATION_INVALID:
+  when: Evaluation 开启梯度或更新 Optimizer
+  message: 评估流程无效
+
+error CHECKPOINT_INVALID:
+  when: Checkpoint 生命周期不允许保存或覆盖
+  message: 检查点无效
+
+error EXPORT_INVALID:
+  when: ExportArtifact 未导出、未验证或输出 shape 无效
+  message: 模型导出无效
+
+test data_pipeline_validates_shapes:
+  given Dataset train_source and valid_source exist
+  and Dataset task_type is declared
+  when TrainingAgent runs PrepareData
+  then Batch input_tensor shape is validated
+  and Batch label_tensor shape is validated
+
+test forward_pass_returns_prediction:
+  given Batch input_tensor shape is valid
+  when TrainingRuntime runs ForwardPass
+  then Prediction shape is valid
+  and Model output matches Prediction
+
+test training_step_updates_model:
+  given Model is in train mode
+  and Batch label_tensor is present
+  when Trainer runs TrainingStep
+  then Loss is finite
+  and gradients are clipped
+  and Optimizer updates Model
+  and ExperimentTracker records Loss
+
+test evaluation_does_not_train:
+  given Model is in eval mode
+  and gradients are disabled
+  when Trainer runs Evaluation
+  then Metrics are computed
+  and Optimizer is not updated during Evaluation
+  and eval_backward is disabled for validation and test data
+
+test best_checkpoint_and_export_are_verified:
+  given Metrics improve on validation data
+  and Checkpoint is best
+  when TrainingAgent runs ExportModel
+  then Checkpoint is saved
+  and ExportArtifact is verified
+  and exported Prediction shape is valid
+
+test test_labels_are_not_leaked:
+  given Dataset test_source exists
+  when TrainingAgent evaluates test data
+  then test labels are used only for Metrics
+  and test_label_leakage is prevented
+  and test labels are not used for training decisions
+
+limit:
+  may_modify:
+    - src/data/**
+    - src/models/**
+    - src/training/**
+    - src/evaluation/**
+    - src/export/**
+    - tests/deep-learning/**
+  must_not_modify:
+    - data/raw/**
+    - artifacts/checkpoints/**
+    - artifacts/exports/**
+
+done:
+  数据加载和 Batch shape 检查通过
+  ForwardPass 输出 Prediction shape 正确
+  TrainingStep 会计算 Loss、裁剪梯度并更新 Optimizer
+  Evaluation 不反向传播也不更新 Optimizer
+  Loss、Metrics、Checkpoint 和 ExportArtifact 都被记录
+  最佳 Checkpoint 已保存
+  ExportArtifact 已用示例输入验证
+  测试集标签不会泄露到训练过程

@@ -42,6 +42,9 @@ done   -> completion criteria
 
 ## Files
 
+- `dl-usl-v0.1.zh.md`: DL-USL 中文设计说明，解释深度学习任务应该如何被 USL 控制。
+- `study-kit/`: 深度学习项目逆向学习资料包，用于把任意代码仓库整理成兼容 USL v0.1 的 DL-USL。
+- `deep_learning_training_pipeline.usl`: 通用深度学习训练流水线 starter，可作为新任务模板改写。
 - `transformer_text_classification.usl`: Transformer text classification training spec.
 - `cnn_image_classification.usl`: CNN image classification training spec.
 
@@ -50,9 +53,12 @@ done   -> completion criteria
 Run from the repository root:
 
 ```bash
+npm run usl -- check dl-usl/deep_learning_training_pipeline.usl
 npm run usl -- check dl-usl/transformer_text_classification.usl
 npm run usl -- check dl-usl/cnn_image_classification.usl
+npm run usl -- check dl-usl/study-kit/templates/dl-usl-project.usl
 npm run usl -- gen-prompt dl-usl/transformer_text_classification.usl
+npm run usl -- gen-prompt dl-usl/study-kit/templates/dl-usl-project.usl
 ```
 
 ## Authoring Rules
@@ -62,3 +68,12 @@ npm run usl -- gen-prompt dl-usl/transformer_text_classification.usl
 - Give important tensors and model components explicit `entity` blocks so flows, rules, and tests can refer to them.
 - Put shape, dtype, masking, metric, training, evaluation, and export requirements in `rule` and `test`, not only in prose.
 - Treat `done` as the contract for whether generated training code is acceptable.
+
+## Recommended Writing Order
+
+1. Write the task goal first: classification, regression, detection, segmentation, generation, recommendation, or representation learning.
+2. Define data and tensors before defining the model.
+3. Define the model only at the level needed to control AI choices.
+4. Define training and evaluation flows separately.
+5. Turn every important training risk into `rule` and `test`.
+6. Put export, reproducibility, and logging in `done`.

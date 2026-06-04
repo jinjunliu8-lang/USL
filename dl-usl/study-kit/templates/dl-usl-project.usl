@@ -1,0 +1,292 @@
+spec DeepLearningProjectStudy v0.1:
+
+goal:
+  将一个深度学习代码仓库逆向整理成可学习、可检查、可复用的 DL-USL 规格。规格必须描述任务、数据、张量、模型、前向传播、损失、优化、训练、评估、检查点、导出或推理、错误模式、验收测试和完成标准。
+
+actor MLStudent:
+  kind: human
+  description: 使用 DL-USL 学习深度学习项目的人
+
+actor ReverseEngineeringAgent:
+  kind: ai_agent
+  description: 阅读源码并生成 DL-USL 规格的 AI Agent
+
+actor TrainingRuntime:
+  kind: target_framework
+  description: 项目使用的 PyTorch、TensorFlow、JAX 或其他深度学习框架
+
+actor ExperimentTracker:
+  kind: service
+  description: 记录训练配置、loss、metrics、checkpoint 和 export artifact 的系统；如果源码未发现则标记为未发现
+
+entity SourceRepository:
+  root: <repo_path>
+  framework: <pytorch | tensorflow | jax | other | unknown>
+  train_entry: <path_or_command>
+  eval_entry: <path_or_command_or_unknown>
+  config_source: <path_or_unknown>
+  description: 被逆向分析的深度学习项目仓库
+
+entity Dataset:
+  train_source: <path_or_config_key>
+  valid_source: <path_or_config_key_or_unknown>
+  test_source: <path_or_config_key_or_unknown>
+  input_fields: <fields>
+  label_fields: <fields_or_unknown>
+  split_policy: <fixed | random | config | unknown>
+  description: 源码中发现的数据来源和字段定义
+
+entity Sample:
+  input: <raw_input_fields>
+  label: <label_fields_or_none>
+  auxiliary: <extra_fields_or_none>
+  description: 单条样本结构
+
+entity Batch:
+  input_tensor: <dtype>[<shape>]
+  label_tensor: <dtype>[<shape_or_none>]
+  mask_tensor: <dtype>[<shape_or_none>]
+  device_policy: <cpu | cuda | distributed | unknown>
+  description: 训练或评估批次中的关键张量
+
+entity Model:
+  architecture: <model_architecture>
+  backbone: <backbone_or_unknown>
+  key_components: <components>
+  input: Batch input_tensor
+  output: Prediction
+  description: 源码中定义的模型结构和关键超参数
+
+entity ForwardGraph:
+  input: Batch input_tensor
+  path: <input -> component -> output>
+  output: Prediction
+  description: 前向传播中的关键张量流动路径
+
+entity Prediction:
+  name: <logits | prediction | output | unknown>
+  shape: <dtype>[<shape>]
+  description: 模型输出，必须能连接到 Loss 或 Metrics
+
+entity Loss:
+  type: <loss_type>
+  input: Prediction
+  target: Batch label_tensor
+  description: 训练目标和源码中的 loss 计算方式
+
+entity Optimizer:
+  type: <optimizer_type>
+  learning_rate: <value_or_config_key>
+  weight_decay: <value_or_config_key_or_unknown>
+  gradient_clip_norm: <value_or_unknown>
+  scheduler: <scheduler_or_unknown>
+  description: 参数更新策略
+
+entity Trainer:
+  epochs: <value_or_config_key>
+  batch_size: <value_or_config_key>
+  seed: <value_or_unknown>
+  mixed_precision: <true | false | unknown>
+  distributed: <true | false | unknown>
+  description: 训练控制逻辑
+
+entity Metrics:
+  train_metrics: <metrics>
+  valid_metrics: <metrics_or_unknown>
+  test_metrics: <metrics_or_unknown>
+  monitor: <metric_for_best_checkpoint_or_unknown>
+  description: 指标计算和监控方式
+
+entity Checkpoint:
+  path: <path_or_unknown>
+  monitor: Metrics monitor
+  state: missing | candidate | best | exported
+  description: 模型权重保存和最佳模型选择规则
+
+entity ExportArtifact:
+  format: <onnx | torchscript | saved_model | inference_only | unknown>
+  example_input: <example_shape_or_unknown>
+  expected_output: Prediction shape
+  state: missing | exported | verified
+  description: 导出或推理产物；如果源码未发现导出流程则标记为 missing
+
+state Checkpoint:
+  states: missing | candidate | best | exported
+  missing -> candidate
+  candidate -> best
+  best -> exported
+
+state ExportArtifact:
+  states: missing | exported | verified
+  missing -> exported
+  exported -> verified
+
+flow InspectRepository:
+  when MLStudent asks ReverseEngineeringAgent to study SourceRepository
+  if SourceRepository root exists
+  and README or train_entry can identify the main task
+  then ReverseEngineeringAgent identifies framework, train_entry, eval_entry, config_source, Dataset, Model, Trainer, Metrics, Checkpoint, and ExportArtifact
+  else reject REPOSITORY_INVALID
+
+flow PrepareData:
+  when TrainingRuntime loads Dataset
+  if Dataset train_source is declared
+  and Sample input fields are known
+  then TrainingRuntime converts Sample into Batch
+  and TrainingRuntime validates Batch input_tensor shape and label_tensor shape
+  and TrainingRuntime validates mask_tensor when padding or sequence masking exists
+  else reject DATASET_INVALID
+
+flow ForwardPass:
+  when TrainingRuntime receives Batch for Model
+  if Batch input_tensor shape matches Model input
+  then TrainingRuntime follows ForwardGraph
+  and TrainingRuntime returns Prediction
+  and TrainingRuntime validates Prediction shape
+  else reject FORWARD_INVALID
+
+flow TrainingStep:
+  when Trainer runs one optimization step
+  if Model is in training mode
+  and Loss target is available
+  then TrainingRuntime computes Prediction
+  and TrainingRuntime computes Loss
+  and TrainingRuntime checks Loss is finite
+  and TrainingRuntime updates Model using Optimizer
+  and ExperimentTracker records Loss when ExperimentTracker exists
+  else reject TRAINING_INVALID
+
+flow Evaluation:
+  when Trainer runs validation or test evaluation
+  if Model is in eval mode
+  and gradients are disabled
+  then TrainingRuntime computes Prediction
+  and TrainingRuntime computes Metrics
+  and TrainingRuntime does not update Optimizer
+  else reject EVALUATION_INVALID
+
+flow SaveBestCheckpoint:
+  when Metrics monitor improves
+  if Checkpoint state is missing or candidate or best
+  then TrainingRuntime saves Model weights to Checkpoint
+  and TrainingRuntime records Metrics monitor value
+  else reject CHECKPOINT_INVALID
+
+flow ExportOrInference:
+  when MLStudent needs deployment or inference understanding
+  if ExportArtifact format is declared
+  then TrainingRuntime exports Model or documents inference path
+  and TrainingRuntime validates example_input produces expected_output
+  else reject EXPORT_INVALID
+
+rule:
+  must 明确 SourceRepository 的 framework、train_entry 和 config_source
+  must 明确 Dataset 的 train_source、input_fields 和 label_fields
+  must 明确 Batch input_tensor、label_tensor 和 mask_tensor 的 shape
+  must 明确 Model、ForwardGraph、Prediction、Loss 和 Optimizer 的连接关系
+  must 明确 Trainer 的 epochs、batch_size、mixed_precision 和 distributed 设置
+  must 明确 Evaluation 使用 eval mode、禁用 gradients 并且不更新 Optimizer
+  must 明确 Metrics monitor 和 Checkpoint 保存规则
+  must 明确 ExportArtifact 是 exported、verified 还是源码未发现
+  must not 在 Evaluation 中更新 Optimizer
+  must not test_label_leakage 使用测试集标签参与训练、调参或早停
+  must not hallucinate 未在 SourceRepository 中发现的模型、数据字段、导出格式或训练行为
+
+error REPOSITORY_INVALID:
+  when: SourceRepository 路径不存在，或无法确定主训练入口和任务类型
+  message: 仓库入口无效
+
+error DATASET_INVALID:
+  when: Dataset 路径、字段、Sample 或 Batch shape 无法从源码确认
+  message: 数据定义无效
+
+error FORWARD_INVALID:
+  when: ForwardGraph 无法连接 Batch input_tensor、Model 和 Prediction
+  message: 前向传播定义无效
+
+error TRAINING_INVALID:
+  when: Loss、Optimizer、Trainer 或训练步骤缺失，或 Loss 非有限值
+  message: 训练流程无效
+
+error EVALUATION_INVALID:
+  when: Evaluation 没有 eval mode、没有禁用 gradients，或更新了 Optimizer
+  message: 评估流程无效
+
+error CHECKPOINT_INVALID:
+  when: Checkpoint 监控指标、保存路径或状态转换不明确
+  message: 检查点规则无效
+
+error EXPORT_INVALID:
+  when: ExportArtifact 没有导出或推理路径，或示例输入输出未验证
+  message: 导出或推理验证无效
+
+test repository_entrypoints_are_identified:
+  given SourceRepository root exists
+  and README or train_entry is available
+  when ReverseEngineeringAgent runs InspectRepository
+  then framework, train_entry, eval_entry, config_source, Dataset, Model, Trainer, Metrics, Checkpoint, and ExportArtifact are identified
+
+test data_pipeline_shapes_are_validated:
+  given Dataset train_source and Sample input fields are declared
+  when TrainingRuntime runs PrepareData
+  then Batch input_tensor, label_tensor, and mask_tensor shapes are validated
+
+test forward_graph_connects_model_output:
+  given Batch input_tensor shape matches Model input
+  when TrainingRuntime runs ForwardPass
+  then ForwardGraph connects Model to Prediction
+  and Prediction shape is validated
+
+test training_step_uses_loss_optimizer_and_logs:
+  given Model is in training mode
+  and Loss target is available
+  when Trainer runs TrainingStep
+  then Loss is finite
+  and Optimizer updates Model
+  and ExperimentTracker records Loss when ExperimentTracker exists
+
+test evaluation_does_not_update_optimizer:
+  given Model is in eval mode
+  and gradients are disabled
+  when Trainer runs Evaluation
+  then Metrics are computed
+  and Optimizer is not updated
+
+test checkpoint_monitor_is_explicit:
+  given Metrics monitor is declared
+  when SaveBestCheckpoint runs
+  then Checkpoint records path and monitor value
+
+test export_or_inference_is_verified:
+  given ExportArtifact format is declared
+  when ExportOrInference runs
+  then example_input produces expected_output
+  and ExportArtifact is exported or verified
+
+test repository_facts_are_not_hallucinated:
+  given SourceRepository does not contain a model, data field, export format, or training behavior
+  when ReverseEngineeringAgent writes DL-USL
+  then missing facts are marked unknown or 未发现
+  and hallucinate is not allowed
+
+test test_label_leakage_is_prevented:
+  given Dataset test_source is declared
+  and Metrics monitor is used for checkpoint or early stopping
+  when Trainer runs TrainingStep and Evaluation
+  then test_label_leakage is not allowed
+  and test labels are not used for training, tuning, checkpoint selection, or early stopping
+
+limit:
+  may_modify:
+    dl-usl/study-kit/**
+  must_not_modify:
+    source repository code under analysis
+    original Obsidian USL-DL.md
+
+done:
+  DL-USL 文件能说明 SourceRepository 的任务、数据、张量、模型、训练、评估、checkpoint、export 或 inference 状态
+  所有关键 rule 都有相关 test
+  Dataset、Batch、ForwardGraph、Prediction、Loss、Optimizer、Trainer、Metrics、Checkpoint 和 ExportArtifact 均已声明或明确标记 unknown
+  Evaluation 明确禁用 gradients 且不更新 Optimizer
+  ExportArtifact 明确 exported、verified 或源码未发现
+  未从源码确认的信息不会被 AI 编造
