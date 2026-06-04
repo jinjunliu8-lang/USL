@@ -41,6 +41,7 @@ npm run usl -- gen-prompt examples/email_login.usl
 - Language overview English: `docs/usl-language.en.md`
 - Chinese spec: `docs/usl-v0.1.zh.md`
 - English spec: `docs/usl-v0.1.en.md`
+- USL intermediary language Chinese: `docs/usl-intermediary-language.zh.md`
 - Order payment case study: `docs/case-study-order-payment.zh.md`
 - Pure Chinese order payment reading version: `docs/order-payment-pure-zh.md`
 - Deep learning profile: `dl-usl/README.md`
